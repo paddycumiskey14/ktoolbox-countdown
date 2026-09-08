@@ -215,7 +215,10 @@ const MAX_GIF_FRAMES = 90; // 1.5 minutes of per-second ticking -- generation
 // time scales with frame count and needs to stay well under typical image
 // fetch timeouts (email proxies, browsers, Klaviyo's preview), especially
 // on slower hosting CPUs.
-const GIF_DENSITY = 144; // matches renderCountdownSVG's raster density
+const GIF_DENSITY = 96; // lower than the PNG/preview's retina density --
+// GIFs are already palette-limited to 256 colors, so extra sharpness isn't
+// very visible, and this cuts pixel count (and therefore quantize/encode
+// time) substantially versus matching the PNG's 144 density.
 const GIF_SCALE = GIF_DENSITY / 72; // raster pixels per SVG unit at that density
 
 function padPaletteToPowerOfTwo(palette) {
