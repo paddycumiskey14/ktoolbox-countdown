@@ -1,6 +1,8 @@
 const express = require('express');
 const path = require('path');
 const sharp = require('sharp');
+const { quantize, applyPalette } = require('gifenc');
+const { GifWriter } = require('omggif');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -113,22 +115,43 @@ function boxCornerRadius(shape, boxW, boxH) {
   return Math.round(Math.min(boxW, boxH) * 0.12); // 'rounded'
 }
 
-function renderCountdownSVG(cfg) {
-  const now = new Date();
-  const target = new Date(cfg.target);
-  let diffMs = target.getTime() - now.getTime();
-  const expired = diffMs <= 0;
-  if (expired) diffMs = 0;
-
-  const totalSeconds = Math.floor(diffMs / 1000);
-  const values = {
+function computeValues(totalSeconds) {
+  return {
     days: Math.floor(totalSeconds / 86400),
     hours: Math.floor((totalSeconds % 86400) / 3600),
     minutes: Math.floor((totalSeconds % 3600) / 60),
     seconds: totalSeconds % 60,
   };
+}
 
+// Shared geometry between the static SVG renderer and the GIF frame cropper
+// below, so box positions/sizes never drift out of sync between the two.
+function layoutFor(cfg) {
   const size = SIZE_MAP.medium;
+  const units = cfg.units;
+  const boxesWidth = units.length * size.boxW + (units.length - 1) * size.gap;
+  const width = boxesWidth + size.pad * 2;
+  const labelsBlockHeight = cfg.labels.enabled ? size.labels + 16 : 8;
+  const height = size.pad + size.boxH + labelsBlockHeight + size.pad;
+  const boxesTop = size.pad;
+  return { size, units, boxesWidth, width, height, boxesTop };
+}
+
+function renderCountdownSVG(cfg, secondsOverride) {
+  let totalSeconds;
+  if (typeof secondsOverride === 'number') {
+    totalSeconds = Math.max(0, Math.floor(secondsOverride));
+  } else {
+    const now = new Date();
+    const target = new Date(cfg.target);
+    const diffMs = Math.max(0, target.getTime() - now.getTime());
+    totalSeconds = Math.floor(diffMs / 1000);
+  }
+  const expired = totalSeconds <= 0;
+
+  const values = computeValues(totalSeconds);
+
+  const { size, units, width, height, boxesTop } = layoutFor(cfg);
 
   const numbersColor = cfg.numbers.color;
   const numbersFont = fontStack(cfg.numbers.fontFamily);
@@ -142,15 +165,6 @@ function renderCountdownSVG(cfg) {
   const labelsFont = fontStack(cfg.labels.fontFamily);
   const labelsWeight = fontWeightValue(cfg.labels.fontWeight);
   const labelsSize = size.labels;
-
-  const units = cfg.units;
-  const boxesWidth = units.length * size.boxW + (units.length - 1) * size.gap;
-  const width = boxesWidth + size.pad * 2;
-
-  const labelsBlockHeight = cfg.labels.enabled ? labelsSize + 16 : 8;
-  const height = size.pad + size.boxH + labelsBlockHeight + size.pad;
-
-  const boxesTop = size.pad;
 
   let boxesSvg = '';
   units.forEach((unit, i) => {
@@ -178,6 +192,120 @@ function renderCountdownSVG(cfg) {
     ${bgRect}
     ${body}
   </svg>`;
+}
+
+// Animated GIF rendering, so the timer visibly ticks down while an email is
+// open on screen (email clients block JavaScript, so this is done the same
+// way other email countdown timer services do it: bake real per-second
+// frames into the GIF itself and let the image format's own animation play
+// them back). To keep frame count/file size bounded for far-off targets,
+// only up to MAX_GIF_FRAMES seconds of true per-second ticking are baked
+// in, starting from "now" (the moment the image is fetched). If the target
+// is further away than that, the animation plays through that window of
+// real ticking and then holds on the last frame -- if it's closer than
+// that, the animation ticks all the way down to the expired frame and
+// holds there.
+//
+// Only the digit box(es) whose value actually changed between two ticks are
+// re-encoded each frame (background/box art/labels are drawn once and left
+// in place) -- this is what keeps file size small, since re-encoding the
+// full canvas on every single frame (as a naive GIF encoder would) produces
+// files that are an order of magnitude larger for no visual benefit.
+const MAX_GIF_FRAMES = 600; // 10 minutes of per-second ticking
+const GIF_DENSITY = 144; // matches renderCountdownSVG's raster density
+const GIF_SCALE = GIF_DENSITY / 72; // raster pixels per SVG unit at that density
+
+function padPaletteToPowerOfTwo(palette) {
+  const padded = palette.slice();
+  let target = 2;
+  while (target < padded.length) target *= 2;
+  while (padded.length < target) padded.push(padded[padded.length - 1] || [0, 0, 0, 0]);
+  return padded;
+}
+
+async function rasterizeCrop(svg, cropRect) {
+  let pipeline = sharp(Buffer.from(svg), { density: GIF_DENSITY }).ensureAlpha();
+  if (cropRect) pipeline = pipeline.extract(cropRect);
+  return pipeline.raw().toBuffer({ resolveWithObject: true });
+}
+
+async function renderCountdownGIF(cfg) {
+  const now = new Date();
+  const target = new Date(cfg.target);
+  const diffMs = Math.max(0, target.getTime() - now.getTime());
+  const totalSeconds = Math.floor(diffMs / 1000);
+
+  const frameCount = Math.max(1, Math.min(totalSeconds, MAX_GIF_FRAMES - 1) + 1);
+
+  const layout = layoutFor(cfg);
+  const isTransparentBg = cfg.background.style === 'transparent';
+  const paletteFormat = isTransparentBg ? 'rgba4444' : 'rgb565';
+
+  // First frame: full canvas.
+  const firstSvg = renderCountdownSVG(cfg, totalSeconds);
+  const { data: firstData, info } = await rasterizeCrop(firstSvg);
+  const width = info.width;
+  const height = info.height;
+
+  const rawPalette = quantize(
+    firstData,
+    isTransparentBg ? 255 : 256,
+    isTransparentBg ? { format: 'rgba4444', oneBitAlpha: true } : { format: 'rgb565' }
+  );
+  const palette = padPaletteToPowerOfTwo(rawPalette);
+  const paletteInts = palette.map((c) => ((c[0] & 0xff) << 16) | ((c[1] & 0xff) << 8) | (c[2] & 0xff));
+  const transparentIndex = isTransparentBg ? palette.findIndex((c) => c.length === 4 && c[3] === 0) : -1;
+
+  const buf = [];
+  const gif = new GifWriter(buf, width, height, { palette: paletteInts });
+
+  const firstIndex = applyPalette(firstData, palette, paletteFormat);
+  gif.addFrame(0, 0, width, height, firstIndex, {
+    delay: 100, // centiseconds (GIF's native unit) = 1 second
+    disposal: 1, // leave in place, so later partial frames layer on top
+    transparent: transparentIndex >= 0 ? transparentIndex : undefined,
+  });
+
+  let previousValues = computeValues(totalSeconds);
+
+  for (let i = 1; i < frameCount; i++) {
+    const remaining = totalSeconds - i;
+    const values = computeValues(remaining);
+    const justExpired = remaining <= 0;
+
+    let cropRectSvg;
+    if (justExpired) {
+      cropRectSvg = { left: 0, top: 0, width: layout.width, height: layout.height };
+    } else {
+      const changedIndex = layout.units.findIndex((unit) => values[unit] !== previousValues[unit]);
+      const startIndex = changedIndex === -1 ? layout.units.length - 1 : changedIndex;
+      const x = layout.size.pad + startIndex * (layout.size.boxW + layout.size.gap);
+      const rectWidth = layout.boxesWidth - startIndex * (layout.size.boxW + layout.size.gap);
+      cropRectSvg = { left: x, top: layout.boxesTop, width: rectWidth, height: layout.size.boxH };
+    }
+
+    const cropRectPx = {
+      left: Math.round(cropRectSvg.left * GIF_SCALE),
+      top: Math.round(cropRectSvg.top * GIF_SCALE),
+      width: Math.round(cropRectSvg.width * GIF_SCALE),
+      height: Math.round(cropRectSvg.height * GIF_SCALE),
+    };
+
+    const svg = renderCountdownSVG(cfg, remaining);
+    const { data } = await rasterizeCrop(svg, cropRectPx);
+    const index = applyPalette(data, palette, paletteFormat);
+    gif.addFrame(cropRectPx.left, cropRectPx.top, cropRectPx.width, cropRectPx.height, index, {
+      delay: 100,
+      disposal: 1,
+      transparent: transparentIndex >= 0 ? transparentIndex : undefined,
+    });
+
+    previousValues = values;
+    if (justExpired) break;
+  }
+
+  gif.end();
+  return Buffer.from(buf);
 }
 
 function parseConfigParam(req) {
@@ -216,6 +344,21 @@ app.get('/timer.png', async (req, res) => {
     res.set('Content-Type', 'image/png');
     setNoCacheHeaders(res);
     res.send(png);
+  } catch (e) {
+    res.status(500).send('Failed to render timer image');
+  }
+});
+
+// Animated GIF version -- this is what should be used in the actual email
+// embed, since it's the only format that can visibly tick down while the
+// email is open (see renderCountdownGIF above for how/why).
+app.get('/timer.gif', async (req, res) => {
+  const cfg = sanitizeConfig(parseConfigParam(req));
+  try {
+    const gif = await renderCountdownGIF(cfg);
+    res.set('Content-Type', 'image/gif');
+    setNoCacheHeaders(res);
+    res.send(gif);
   } catch (e) {
     res.status(500).send('Failed to render timer image');
   }

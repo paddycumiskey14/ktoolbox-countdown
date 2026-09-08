@@ -37,21 +37,28 @@
 
   // ---------- Rendering ----------
 
-  function buildImageUrl(cfg) {
+  function buildImageUrl(cfg, format) {
     const params = new URLSearchParams({ config: JSON.stringify(cfg) });
-    return `${window.location.origin}/timer.png?${params.toString()}`;
+    return `${window.location.origin}/timer.${format}?${params.toString()}`;
   }
 
   function render() {
-    const url = buildImageUrl(config);
-    previewImg.src = url;
-    embedCode.value = `<div style="text-align:center;"><img src="${url}" alt="Countdown timer" width="480" style="max-width:100%; display:inline-block;" /></div>`;
+    // The browser preview keeps using a single-frame PNG that we manually
+    // refresh every second (see refreshPreviewTick) -- it's cheap to
+    // regenerate on every settings change, which the animated GIF is not.
+    previewImg.src = buildImageUrl(config, 'png');
+    // The actual embed uses the animated GIF, since it's the only format
+    // that can visibly tick down while an email is open (email clients
+    // block JavaScript, so a live-refreshing <img> like the preview isn't
+    // possible there).
+    const embedUrl = buildImageUrl(config, 'gif');
+    embedCode.value = `<div style="text-align:center;"><img src="${embedUrl}" alt="Countdown timer" width="480" style="max-width:100%; display:inline-block;" /></div>`;
   }
 
   function refreshPreviewTick() {
     // Force a reload every second so the live preview visibly counts down,
     // without changing the underlying config.
-    const url = new URL(buildImageUrl(config));
+    const url = new URL(buildImageUrl(config, 'png'));
     url.searchParams.set('t', Date.now());
     previewImg.src = url.toString();
   }
