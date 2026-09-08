@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>K:toolbox - Simple Timer</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <h1>K:toolbox - Simple Timer</h1>
+      <p class="subtitle">The easy way to add a countdown timer to your Klaviyo emails</p>
+    </header>
+
+    <section class="viewer-section">
+      <div class="live-badge">LIVE</div>
+      <div class="viewer-top-row">
+        <div class="tab-toggle" role="tablist">
+          <button type="button" class="tab-btn active" data-tab="preview" role="tab" aria-selected="true">Live preview</button>
+          <button type="button" class="tab-btn" data-tab="embed" role="tab" aria-selected="false">Embed code</button>
+        </div>
+        <div class="mode-toggle" role="group" aria-label="Preview backdrop">
+          <button type="button" id="modeLightBtn" class="mode-btn active" data-mode="light" aria-label="Preview on light backdrop" title="Light backdrop">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          </button>
+          <button type="button" id="modeDarkBtn" class="mode-btn" data-mode="dark" aria-label="Preview on dark backdrop" title="Dark backdrop">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 1020.354 15.354z"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div id="previewPanel" class="tab-panel preview-frame">
+        <img id="previewImg" class="preview-img" alt="Countdown timer preview" />
+      </div>
+
+      <div id="embedPanel" class="tab-panel embed-panel" hidden>
+        <div class="embed-row">
+          <textarea id="embedCode" class="embed-code" readonly rows="4"></textarea>
+          <button id="copyBtn" class="copy-btn" type="button">Copy</button>
+        </div>
+        <p class="embed-hint">Paste this into a Klaviyo custom HTML block. It re-renders on every open, so it always shows accurate time remaining.</p>
+      </div>
+    </section>
+
+    <form id="settingsForm" class="settings-form" autocomplete="off">
+      <div class="field-group">
+        <label class="field-label" for="targetInput">Ends on</label>
+        <input id="targetInput" type="datetime-local" class="hex-input" />
+      </div>
+
+      <div class="field-group">
+        <span class="field-label">Number Style</span>
+        <div class="tab-toggle field-toggle" data-field="numbersFontFamily">
+          <button type="button" class="tab-btn" data-value="sans">Sans Serif</button>
+          <button type="button" class="tab-btn" data-value="serif">Serif</button>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label" for="numbersColor">Number Colour</label>
+        <input id="numbersColor" type="text" class="hex-input" placeholder="#C4FF3D" />
+      </div>
+
+      <div class="field-group">
+        <span class="field-label">Number Weight</span>
+        <div class="tab-toggle field-toggle" data-field="numbersFontWeight">
+          <button type="button" class="tab-btn" data-value="normal">Normal</button>
+          <button type="button" class="tab-btn" data-value="bold">Bold</button>
+        </div>
+      </div>
+
+      <hr class="field-divider" />
+
+      <div class="field-group">
+        <span class="field-label">Labels</span>
+        <div class="tab-toggle field-toggle" data-field="labelsEnabled">
+          <button type="button" class="tab-btn" data-value="on">On</button>
+          <button type="button" class="tab-btn" data-value="off">Off</button>
+        </div>
+      </div>
+
+      <div class="field-group" id="labelColorGroup">
+        <label class="field-label" for="labelsColor">Label Colour</label>
+        <input id="labelsColor" type="text" class="hex-input" placeholder="#6b7280" />
+      </div>
+
+      <div class="field-group" id="labelStyleGroup">
+        <span class="field-label">Label Style</span>
+        <div class="tab-toggle field-toggle" data-field="labelsFontFamily">
+          <button type="button" class="tab-btn" data-value="sans">Sans Serif</button>
+          <button type="button" class="tab-btn" data-value="serif">Serif</button>
+        </div>
+      </div>
+
+      <div class="field-group" id="labelWeightGroup">
+        <span class="field-label">Label Weight</span>
+        <div class="tab-toggle field-toggle" data-field="labelsFontWeight">
+          <button type="button" class="tab-btn" data-value="normal">Normal</button>
+          <button type="button" class="tab-btn" data-value="bold">Bold</button>
+        </div>
+      </div>
+
+      <hr class="field-divider" />
+
+      <div class="field-group">
+        <label class="field-label" for="numberBoxColor">Number Box Colour</label>
+        <input id="numberBoxColor" type="text" class="hex-input" placeholder="#111111" />
+      </div>
+
+      <div class="field-group">
+        <span class="field-label">Number Box Shape</span>
+        <div class="tab-toggle field-toggle" data-field="numberBoxShape">
+          <button type="button" class="tab-btn" data-value="square">Square</button>
+          <button type="button" class="tab-btn" data-value="rounded">Rounded</button>
+          <button type="button" class="tab-btn" data-value="circle">Circle</button>
+        </div>
+      </div>
+
+      <hr class="field-divider" />
+
+      <div class="field-group">
+        <span class="field-label">Background Style</span>
+        <div class="tab-toggle field-toggle" data-field="backgroundStyle">
+          <button type="button" class="tab-btn" data-value="solid">Solid</button>
+          <button type="button" class="tab-btn" data-value="transparent">Transparent</button>
+        </div>
+      </div>
+
+      <div class="field-group" id="backgroundColorGroup">
+        <label class="field-label" for="backgroundColor">Background Colour</label>
+        <input id="backgroundColor" type="text" class="hex-input" placeholder="#ffffff" />
+      </div>
+    </form>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

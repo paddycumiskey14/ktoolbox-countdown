@@ -1,0 +1,17 @@
+{
+  "name": "klavkit-countdown",
+  "version": "0.1.0",
+  "description": "Live email countdown timer tool, controlled via a chat-style prompt.",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "sharp": "^0.35.4"
+  }
+}
