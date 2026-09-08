@@ -188,11 +188,20 @@ function parseConfigParam(req) {
   }
 }
 
+// Strong anti-caching headers so email clients/proxies (e.g. Gmail's image
+// proxy) always re-fetch a fresh render instead of serving a stale snapshot.
+function setNoCacheHeaders(res) {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+}
+
 app.get('/timer.svg', (req, res) => {
   const cfg = sanitizeConfig(parseConfigParam(req));
   const svg = renderCountdownSVG(cfg);
   res.set('Content-Type', 'image/svg+xml');
-  res.set('Cache-Control', 'no-store');
+  setNoCacheHeaders(res);
   res.send(svg);
 });
 
@@ -205,7 +214,7 @@ app.get('/timer.png', async (req, res) => {
   try {
     const png = await sharp(Buffer.from(svg), { density: 144 }).png().toBuffer();
     res.set('Content-Type', 'image/png');
-    res.set('Cache-Control', 'no-store');
+    setNoCacheHeaders(res);
     res.send(png);
   } catch (e) {
     res.status(500).send('Failed to render timer image');
