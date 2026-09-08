@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: klavkit-countdown
+    name: ktoolbox-countdown
     runtime: node
     plan: free
     buildCommand: npm install

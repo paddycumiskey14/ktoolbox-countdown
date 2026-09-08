@@ -1,5 +1,5 @@
 {
-  "name": "klavkit-countdown",
+  "name": "ktoolbox-countdown",
   "version": "0.1.0",
   "description": "Live email countdown timer tool, controlled via a chat-style prompt.",
   "main": "server.js",
