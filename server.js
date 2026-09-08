@@ -211,7 +211,10 @@ function renderCountdownSVG(cfg, secondsOverride) {
 // in place) -- this is what keeps file size small, since re-encoding the
 // full canvas on every single frame (as a naive GIF encoder would) produces
 // files that are an order of magnitude larger for no visual benefit.
-const MAX_GIF_FRAMES = 600; // 10 minutes of per-second ticking
+const MAX_GIF_FRAMES = 90; // 1.5 minutes of per-second ticking -- generation
+// time scales with frame count and needs to stay well under typical image
+// fetch timeouts (email proxies, browsers, Klaviyo's preview), especially
+// on slower hosting CPUs.
 const GIF_DENSITY = 144; // matches renderCountdownSVG's raster density
 const GIF_SCALE = GIF_DENSITY / 72; // raster pixels per SVG unit at that density
 
@@ -241,40 +244,19 @@ async function renderCountdownGIF(cfg) {
   const isTransparentBg = cfg.background.style === 'transparent';
   const paletteFormat = isTransparentBg ? 'rgba4444' : 'rgb565';
 
-  // First frame: full canvas.
-  const firstSvg = renderCountdownSVG(cfg, totalSeconds);
-  const { data: firstData, info } = await rasterizeCrop(firstSvg);
-  const width = info.width;
-  const height = info.height;
-
-  const rawPalette = quantize(
-    firstData,
-    isTransparentBg ? 255 : 256,
-    isTransparentBg ? { format: 'rgba4444', oneBitAlpha: true } : { format: 'rgb565' }
-  );
-  const palette = padPaletteToPowerOfTwo(rawPalette);
-  const paletteInts = palette.map((c) => ((c[0] & 0xff) << 16) | ((c[1] & 0xff) << 8) | (c[2] & 0xff));
-  const transparentIndex = isTransparentBg ? palette.findIndex((c) => c.length === 4 && c[3] === 0) : -1;
-
-  const buf = [];
-  const gif = new GifWriter(buf, width, height, { palette: paletteInts });
-
-  const firstIndex = applyPalette(firstData, palette, paletteFormat);
-  gif.addFrame(0, 0, width, height, firstIndex, {
-    delay: 100, // centiseconds (GIF's native unit) = 1 second
-    disposal: 1, // leave in place, so later partial frames layer on top
-    transparent: transparentIndex >= 0 ? transparentIndex : undefined,
-  });
-
+  // Work out each frame's crop rect up front (cheap, no rasterization yet),
+  // so the actual rasterization below can happen in parallel across frames
+  // instead of one-at-a-time -- this is the main lever for keeping total
+  // generation time low on slower hosting CPUs.
+  const frameDescriptors = [];
   let previousValues = computeValues(totalSeconds);
-
-  for (let i = 1; i < frameCount; i++) {
+  for (let i = 0; i < frameCount; i++) {
     const remaining = totalSeconds - i;
     const values = computeValues(remaining);
     const justExpired = remaining <= 0;
 
     let cropRectSvg;
-    if (justExpired) {
+    if (i === 0 || justExpired) {
       cropRectSvg = { left: 0, top: 0, width: layout.width, height: layout.height };
     } else {
       const changedIndex = layout.units.findIndex((unit) => values[unit] !== previousValues[unit]);
@@ -291,18 +273,46 @@ async function renderCountdownGIF(cfg) {
       height: Math.round(cropRectSvg.height * GIF_SCALE),
     };
 
-    const svg = renderCountdownSVG(cfg, remaining);
-    const { data } = await rasterizeCrop(svg, cropRectPx);
+    frameDescriptors.push({ remaining, cropRectPx, isFull: i === 0 || justExpired });
+    previousValues = values;
+    if (justExpired) {
+      frameDescriptors.length = i + 1; // don't render anything past expiry
+      break;
+    }
+  }
+
+  const rasterResults = await Promise.all(
+    frameDescriptors.map((desc) => {
+      const svg = renderCountdownSVG(cfg, desc.remaining);
+      return rasterizeCrop(svg, desc.isFull ? undefined : desc.cropRectPx);
+    })
+  );
+
+  const width = rasterResults[0].info.width;
+  const height = rasterResults[0].info.height;
+
+  const rawPalette = quantize(
+    rasterResults[0].data,
+    isTransparentBg ? 255 : 256,
+    isTransparentBg ? { format: 'rgba4444', oneBitAlpha: true } : { format: 'rgb565' }
+  );
+  const palette = padPaletteToPowerOfTwo(rawPalette);
+  const paletteInts = palette.map((c) => ((c[0] & 0xff) << 16) | ((c[1] & 0xff) << 8) | (c[2] & 0xff));
+  const transparentIndex = isTransparentBg ? palette.findIndex((c) => c.length === 4 && c[3] === 0) : -1;
+
+  const buf = [];
+  const gif = new GifWriter(buf, width, height, { palette: paletteInts });
+
+  frameDescriptors.forEach((desc, i) => {
+    const { data } = rasterResults[i];
     const index = applyPalette(data, palette, paletteFormat);
-    gif.addFrame(cropRectPx.left, cropRectPx.top, cropRectPx.width, cropRectPx.height, index, {
-      delay: 100,
-      disposal: 1,
+    const rect = desc.isFull ? { left: 0, top: 0, width, height } : desc.cropRectPx;
+    gif.addFrame(rect.left, rect.top, rect.width, rect.height, index, {
+      delay: 100, // centiseconds (GIF's native unit) = 1 second
+      disposal: 1, // leave in place, so later partial frames layer on top
       transparent: transparentIndex >= 0 ? transparentIndex : undefined,
     });
-
-    previousValues = values;
-    if (justExpired) break;
-  }
+  });
 
   gif.end();
   return Buffer.from(buf);
