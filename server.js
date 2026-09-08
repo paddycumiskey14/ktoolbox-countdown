@@ -235,8 +235,17 @@ async function rasterizeCrop(svg, cropRect) {
   return pipeline.raw().toBuffer({ resolveWithObject: true });
 }
 
+// Generating and transferring the GIF takes a few seconds itself, so by the
+// time it actually renders on screen, real time has moved past the moment
+// we calculated "now" at the start of this function -- without correction,
+// the displayed countdown reads a few seconds ahead of the true remaining
+// time. Shift our reference point forward by this estimate so frame 0 is
+// closer to accurate at the moment it's actually seen, not the moment
+// generation started.
+const GIF_GENERATION_COMPENSATION_MS = 5000;
+
 async function renderCountdownGIF(cfg) {
-  const now = new Date();
+  const now = new Date(Date.now() + GIF_GENERATION_COMPENSATION_MS);
   const target = new Date(cfg.target);
   const diffMs = Math.max(0, target.getTime() - now.getTime());
   const totalSeconds = Math.floor(diffMs / 1000);
